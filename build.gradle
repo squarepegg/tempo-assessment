@@ -1,0 +1,177 @@
+/*
+ * Three test suites, each with its own source set and its own Gradle task, so every test class belongs to exactly one
+ * task and an IDE can run it directly:
+ *
+ *   src/test/java             FilterTest                       ./gradlew test             Task 1 (the filter)         must be green
+ *   src/cacheProblems/java    tests AGAINST the reviewed cache ./gradlew cacheProblems    Task 2 (the findings)       11 expected failures
+ *   src/cacheValidation/java  tests of the TESTS               ./gradlew cacheValidation  Task 2 (are they fair?)     must be green
+ *   src/simplecache/java      the cache lab (the reviewed class, a fixed sketch, the simulation engine). Not a test.
+ *
+ * Each suite declares how many of its tests are EXPECTED to fail. The build passes when that is exactly what happens.
+ * So `./gradlew check` (or `./gradlew review`) is green when everything is as designed, and red when something
+ * changed: a cache was fixed, a test was broken, or a finding stopped reproducing.
+ */
+plugins {
+    id 'java'
+    id 'idea'
+}
+
+repositories {
+    mavenCentral()
+}
+
+// JDK-agnostic on purpose: no toolchain and no `release` pin, so everything compiles with whichever JDK runs Gradle
+// (tested on 17, 21 and 25). The code uses nothing newer than Java 17 (records, switch expressions). The Gradle wrapper
+// is 9.x because Gradle 8.x cannot run on JDK 25.
+
+// ---- source sets ----
+
+sourceSets {
+    simplecache // the cache lab: reviewed SimpleCache (verbatim), a clocked copy, a corrected sketch, the simulation engine
+
+    cacheProblems {
+        compileClasspath += sourceSets.simplecache.output
+        runtimeClasspath += sourceSets.simplecache.output
+    }
+
+    cacheValidation {
+        compileClasspath += sourceSets.simplecache.output
+        runtimeClasspath += sourceSets.simplecache.output
+    }
+}
+
+['test', 'cacheProblems', 'cacheValidation'].each { name ->
+    dependencies.add("${name}Implementation", dependencies.platform('org.junit:junit-bom:5.11.3'))
+    dependencies.add("${name}Implementation", 'org.junit.jupiter:junit-jupiter')
+    dependencies.add("${name}RuntimeOnly", 'org.junit.platform:junit-platform-launcher')
+}
+
+// Tell IntelliJ that these source sets hold tests, so it offers run/debug gutters on their classes.
+idea {
+    module {
+        testSources.from(sourceSets.cacheProblems.java.srcDirs, sourceSets.cacheValidation.java.srcDirs)
+    }
+}
+
+// ---- how every suite behaves ----
+
+def scoreboard = new LinkedHashMap<String, Map<String, Object>>()
+
+/**
+ * Applies the shared rules to a Test task:
+ *  - always runs (never "UP-TO-DATE");
+ *  - failures never abort the build by themselves; instead the build compares the number of failing tests with the
+ *    number this suite EXPECTS, and fails if they differ;
+ *  - prints a banner before the tests (what this suite is for, what to expect) and a verdict after.
+ */
+def configureSuite = { Test t, String title, String purpose, int expectedFailures ->
+    t.group = 'verification'
+    t.description = "${title}: ${purpose}"
+    t.useJUnitPlatform()
+    t.maxHeapSize = '1g'
+    t.outputs.upToDateWhen { false }
+    t.ignoreFailures = true
+    t.testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat = 'full' // a failure message is a bug report, so print all of it
+    }
+
+    t.doFirst {
+        println ''
+        println ">>> ${t.name}: ${title}"
+        println "    ${purpose}"
+        println "    expected: ${expectedFailures == 0 ? 'every test passes' : expectedFailures + ' tests fail (each failure is a finding)'}"
+        println ''
+    }
+
+    // Collect the totals when the whole suite finishes. (addTestListener, not the deprecated afterSuite(Closure).)
+    t.addTestListener([
+        beforeSuite: { d -> },
+        beforeTest : { d -> },
+        afterTest  : { d, r -> },
+        afterSuite : { desc, result ->
+            if (desc.parent == null) {
+                scoreboard[t.name] = [title   : title,
+                                      passed  : result.successfulTestCount,
+                                      failed  : result.failedTestCount,
+                                      skipped : result.skippedTestCount,
+                                      expected: expectedFailures]
+            }
+        }
+    ] as TestListener)
+
+    t.doLast {
+        def r = scoreboard[t.name]
+        if (r == null) {
+            return
+        }
+        def patterns = t.filter.commandLineIncludePatterns
+        boolean filtered = !(patterns instanceof org.gradle.api.provider.Provider ? patterns.get() : patterns).isEmpty()
+        println ''
+        if (filtered) {
+            println "<<< ${t.name}: ${r.passed} passed, ${r.failed} failed, ${r.skipped} skipped (filtered run, expectation of ${expectedFailures} failing tests not checked)"
+        } else if (r.failed != expectedFailures) {
+            def hint = r.failed > expectedFailures
+                ? 'A test that should pass is failing, or a finding was added. Fix the test or update the expectation in build.gradle and the README.'
+                : 'Fewer tests fail than expected. If a problem was fixed in the cache, update the expectation in build.gradle and the README.'
+            throw new GradleException("${t.name}: expected exactly ${expectedFailures} failing tests but ${r.failed} failed. ${hint}")
+        } else if (expectedFailures == 0) {
+            println "<<< ${t.name}: OK, ${r.passed} passed, ${r.skipped} skipped"
+        } else {
+            println "<<< ${t.name}: OK, as designed: ${r.failed} tests failed (the findings), ${r.passed} passed, ${r.skipped} skipped"
+        }
+    }
+}
+
+// ---- the three suites ----
+
+tasks.named('test', Test) {
+    configureSuite(it, 'Task 1: HierarchyFilter',
+        'tests the filter() implementation (FilterTest)', 0)
+}
+
+tasks.register('cacheProblems', Test) {
+    testClassesDirs = sourceSets.cacheProblems.output.classesDirs
+    classpath = sourceSets.cacheProblems.runtimeClasspath
+    testLogging.showStandardStreams = true // seed replays print their trace
+    // forward the replay seed and make it a task input, so a replay is never skipped
+    def simSeed = System.getProperty('sim.seed') ?: ''
+    inputs.property('simSeed', simSeed)
+    systemProperty 'sim.seed', simSeed
+    configureSuite(it, 'Task 2: problems in the reviewed SimpleCache',
+        'runs the requirements a production cache must meet against the reviewed class; a failing test is a finding (add -Dsim.seed=N to replay one simulation seed)', 11)
+    mustRunAfter 'test'
+}
+
+tasks.register('cacheValidation', Test) {
+    testClassesDirs = sourceSets.cacheValidation.output.classesDirs
+    classpath = sourceSets.cacheValidation.runtimeClasspath
+    configureSuite(it, 'Task 2: are the findings fair?',
+        'the same requirements pass on a corrected sketch, broken variants are caught, the simulation is deterministic', 0)
+    mustRunAfter 'cacheProblems'
+}
+
+tasks.named('check') {
+    dependsOn 'cacheProblems', 'cacheValidation'
+}
+
+// ---- one command, one scoreboard ----
+
+tasks.register('review') {
+    group = 'verification'
+    description = 'Runs all three suites and prints one scoreboard.'
+    dependsOn 'test', 'cacheProblems', 'cacheValidation'
+    doLast {
+        println ''
+        println '=================================== SCOREBOARD ===================================='
+        println String.format('%-46s %-16s %6s %6s %7s', 'Suite', 'Gradle task', 'passed', 'failed', 'skipped')
+        println '-' * 86
+        scoreboard.each { name, r ->
+            println String.format('%-46s %-16s %6d %6d %7d', r.title, name, r.passed, r.failed, r.skipped)
+            println String.format('    expected failures: %d. %s', r.expected,
+                r.expected == 0 ? 'No failures expected.' : 'The failures are the findings.')
+        }
+        println '===================================================================================='
+        println 'Everything is as designed.'
+    }
+}
