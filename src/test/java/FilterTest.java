@@ -1,5 +1,7 @@
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -46,24 +48,13 @@ class FilterTest {
         assertSameForest(h(expectedIds, expectedDepths), actual, "");
     }
 
-    /** The forest as the {@code Hierarchy} Javadoc draws it: one node per line, one hyphen per level of depth. */
-    private static String render(Hierarchy hierarchy) {
-        if (hierarchy.size() == 0) return "(empty)";
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < hierarchy.size(); i++) {
-            if (i > 0) sb.append('\n');
-            sb.append("- ".repeat(Math.max(0, hierarchy.depth(i)))).append(hierarchy.nodeId(i));
-        }
-        return sb.toString();
-    }
-
     /** Asserts two forests are equal. On a difference the message shows both as lists and as drawn trees. */
     private static void assertSameForest(Hierarchy expected, Hierarchy actual, String message) {
         if (expected.formatString().equals(actual.formatString())) return;
         fail((message.isEmpty() ? "" : message + "\n")
             + "expected " + expected.formatString() + "\n  actual " + actual.formatString()
-            + "\n\nexpected forest:\n" + render(expected)
-            + "\n\nactual forest:\n" + render(actual));
+            + "\n\nexpected forest:\n" + ForestView.render(expected)
+            + "\n\nactual forest:\n" + ForestView.render(actual));
     }
 
     // ---- the provided test, unchanged ----
@@ -408,8 +399,8 @@ class FilterTest {
     @Test
     void renderDrawsTheForestAsTheJavadocDoes() {
         String expected = String.join("\n", "1", "- 2", "- - 3", "- - - 4", "- 5", "6", "- 7", "8", "- 9", "- 10", "- - 11");
-        assertEquals(expected, render(example()));
-        assertEquals("(empty)", render(h(new int[0], new int[0])));
+        assertEquals(expected, ForestView.render(example()));
+        assertEquals("(empty)", ForestView.render(h(new int[0], new int[0])));
     }
 
     /** A difference fails the assertion and shows both forests drawn; identical forests pass. */
@@ -422,6 +413,18 @@ class FilterTest {
         assertTrue(error.getMessage().contains("context"));
         assertTrue(error.getMessage().contains("expected forest:\n1\n- 2\n- - 3"), error.getMessage());
         assertTrue(error.getMessage().contains("actual forest:\n1\n- 2"), error.getMessage());
+    }
+
+    /**
+     * The diagram in README.md is exactly what the code prints ({@code ./gradlew showExample -q}), so it cannot go stale.
+     * Fails with the regeneration command if the README and the real output differ.
+     */
+    @Test
+    void theReadmeDiagramIsTheRealOutput() throws Exception {
+        String readme = Files.readString(Path.of("README.md"));
+        assertTrue(readme.contains(ForestDemo.diagram()),
+            "README.md no longer contains the generated diagram. Regenerate it with ./gradlew showExample -q and paste it in. Expected:\n"
+            + ForestDemo.diagram());
     }
 
     /** A looser predicate ("p or r") keeps every node a stricter one ("p") keeps. */

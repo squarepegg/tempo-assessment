@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    name: review (JDK ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [17, 21, 25]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # All three suites and the scoreboard. cacheProblems is expected to report 11 failing tests; the build checks
+      # that count, so this step passes when the result is exactly as designed.
+      - name: Review (all suites)
+        shell: bash
+        run: ./gradlew review --console=plain | tee review.log
+
+      - name: Example forest
+        if: always()
+        shell: bash
+        run: ./gradlew showExample -q --console=plain | tee forest.txt
+
+      - name: Mutation check (Task 1 tests against deliberately broken code)
+        if: matrix.java == 21
+        shell: bash
+        run: ./scripts/mutation-check.sh | tee mutation.log
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Scoreboard (JDK ${{ matrix.java }})"
+            echo
+            echo "The 11 failures in \`cacheProblems\` are expected: each one is a finding about the reviewed \`SimpleCache\`. The build passes only when exactly that many fail."
+            echo
+            echo '```text'
+            sed -n '/^Suite/,/^Everything/p' review.log | grep -v 'expected failures'
+            echo '```'
+            echo
+            echo "## Example forest"
+            echo
+            echo '```text'
+            cat forest.txt
+            echo '```'
+            if [ -f mutation.log ]; then
+              echo
+              echo "## Mutation check"
+              echo
+              echo '```text'
+              grep -E 'KILLED|SURVIVED|INVALID|Killed:' mutation.log | sed -E 's/ \([0-9]+ failing\):.*//; s/:.*//'
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-jdk-${{ matrix.java }}
+          path: build/reports/tests
+          if-no-files-found: ignore

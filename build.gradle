@@ -175,3 +175,12 @@ tasks.register('review') {
         println 'Everything is as designed.'
     }
 }
+
+// ---- the README example, generated from the real code ----
+
+tasks.register('showExample', JavaExec) {
+    group = 'documentation'
+    description = 'Prints the README example: the task\'s forest before and after filter(id % 3 != 0), drawn as trees. Use -q for just the diagram.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ForestDemo'
+}
