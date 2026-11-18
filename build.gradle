@@ -184,3 +184,15 @@ tasks.register('showExample', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'ForestDemo'
 }
+
+// ---- try your own input ----
+
+tasks.register('forest', JavaExec) {
+    group = 'documentation'
+    description = 'Filter your own forest and see it drawn, or an error naming the broken rule. Example: ./gradlew forest -q --args="--forest 1:0,2:1,3:2 --reject 2"'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ForestCli'
+    // The tool prints its own error and exits 1 on invalid input. Gradle would wrap that in a long failure report that
+    // hides it, so the task ignores the exit value. Run the class directly (see README) to get the exit code.
+    ignoreExitValue = true
+}

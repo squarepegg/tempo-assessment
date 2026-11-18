@@ -12,7 +12,7 @@ Expected output (the 11 failures in `cacheProblems` are intended, see [Reading t
 
 ```text
 Suite                                          Gradle task      passed failed skipped
-Task 1: HierarchyFilter                        test                 33      0       0
+Task 1: HierarchyFilter                        test                 49      0       0
 Task 2: problems in the reviewed SimpleCache   cacheProblems         1     11       1
 Task 2: are the findings fair?                 cacheValidation      12      0       0
 Everything is as designed.
@@ -22,7 +22,7 @@ Everything is as designed.
 
 | Task | Where | Gradle task | What it answers | Expected result |
 |---|---|---|---|---|
-| 1. Hierarchy filter | `src/main/java/Hierarchy.java` and `src/test/java/FilterTest.java` | `./gradlew test` | Is `filter()` correct? | **All 33 pass** |
+| 1. Hierarchy filter | `src/main/java/Hierarchy.java`, `src/test/java/FilterTest.java`, and the [try-your-own-input tool](#try-your-own-input) with its tests | `./gradlew test` | Is `filter()` correct? Does the tool accept and reject input correctly? | **All 49 pass** |
 | 2. Code review | [`SimpleCache.md`](SimpleCache.md) (the review itself) | | | |
 | 2, evidence | `src/cacheProblems/java` | `./gradlew cacheProblems` | Does the reviewed `SimpleCache` meet the requirements a production cache must meet? | **11 fail (expected)**, each failure is a finding; 1 passes, 1 skipped |
 | 2, evidence | `src/cacheValidation/java` | `./gradlew cacheValidation` | Are those failures fair, and can the simulation be trusted? | **All 12 pass** |
@@ -66,6 +66,7 @@ Requirements: **JDK 17 or newer** (tested on 17, 21 and 25). The Gradle 9.9.1 wr
 ./gradlew cacheValidation         # the fairness checks (all green)
 ./scripts/mutation-check.sh       # Task 1: tests failing on deliberately broken code, ends "Killed: 9  Survived: 0"
 ./gradlew showExample -q          # prints the example forest above, generated from the real code
+./gradlew forest -q --args="--forest 1:0,2:1,3:2 --reject 2"   # filter your own forest (see "Try your own input")
 ```
 
 **CI:** GitHub Actions runs `review` on JDK 17, 21 and 25 and the mutation check on JDK 21. Each job's summary shows the scoreboard, the example forest and the mutation result, and uploads the HTML test reports as an artifact. See the [Actions tab](https://github.com/squarepegg/tempo-assessment/actions/workflows/ci.yml).
@@ -90,6 +91,53 @@ Requirements: **JDK 17 or newer** (tested on 17, 21 and 25). The Gradle 9.9.1 wr
 **IDE:** import as a Gradle project. Each test class belongs to one Gradle task; the tasks are listed under `verification` in the Gradle tool window.
 
 All code is in the default package, as in the original file.
+
+## Try your own input
+
+Give the tool a forest and say what to reject. It draws the input and the result side by side, or names the rule your input breaks.
+
+```bash
+./gradlew forest -q --args="--forest 1:0,2:1,3:2,4:1,5:0 --reject 2"
+```
+
+```text
+input (5 nodes)                     after filter(reject 2)
+1                                   1
+- 2   <- rejected                   - 4
+- - 3   removed with an ancestor    5
+- 4
+5
+
+as --forest input: 1:0,4:1,5:0
+```
+
+Invalid input gets an error that names the node and the rule:
+
+```bash
+./gradlew forest -q --args="--forest 1:0,2:2"
+```
+
+```text
+error: node at index 1 (id 2) has depth 2 but the node before it has depth 0; a depth can rise by at most 1 per node
+```
+
+| Option | Meaning |
+|---|---|
+| `--forest <id:depth,...>` | The forest in depth-first order, each node as `id:depth`. This is the format of the `as --forest input` line, so a result can be fed back in. |
+| `--tree-file <path>` | The drawn format instead: one node per line, a hyphen and a space per level, then the id (`- - 3`). The same drawing the tests and this README use. |
+| `--reject <id,id,...>` | Reject these ids. |
+| `--reject-multiples-of <n>` | Reject ids divisible by `n` (`n` of at least 1). Combine with `--reject` freely. |
+
+The input rules are the ones in the `Hierarchy` Javadoc, plus unique ids: the first node has depth 0, depths are never negative, and a depth rises by at most 1 per node. `filter` assumes valid input and does not re-check it (see [Assumptions](#assumptions)); the tool checks first, so a malformed forest produces an error and never reaches `filter`.
+
+Through Gradle the task always completes and prints the error. For the exit code (0 on success, 1 on invalid input or usage), run the class directly:
+
+```bash
+./gradlew testClasses -q
+java -cp build/classes/java/main:build/classes/java/test ForestCli --forest 1:0,2:2; echo "exit $?"
+```
+
+`./gradlew forest -q --args="--help"` prints the full usage. The tool and its tests are in `src/test/java` (`ForestCli`, `ForestInput`, `ForestCliTest`); the README examples above are checked against the real output by a test.
 
 ## Task 1: `HierarchyFilter.filter`
 
@@ -180,6 +228,7 @@ Each test targets a specific way the algorithm could be wrong:
 | Metamorphic | Relations between two runs, with no reference implementation, over 1,000 seeded forests each: filtering with `p` then `q` equals filtering once with `p and q`; a looser predicate keeps everything a stricter one keeps; the output keeps input order and depths; and rejecting one more node removes exactly that node's subtree from the output. |
 | Failure output | A failed forest comparison prints both forests as lists and drawn as trees (same hyphen format as the `Hierarchy` Javadoc), so a missing or surviving subtree is visible at a glance. The renderer is itself tested. |
 | README diagram | The worked-example diagram in this README must equal what `./gradlew showExample -q` prints, so it cannot go stale. |
+| Try-your-own-input tool | `ForestCliTest`: valid input drawn side by side; a round trip of the printed result back through `--forest`; the drawn-file format; each rule violation (depth rising by more than 1, first node not a root, negative depth, duplicate id, malformed item, out-of-range number, bad line in a drawn file) gives its exact error; usage errors name the problem; the two README examples are checked against the real output. |
 
 ### Proof that the tests can fail: mutation check
 

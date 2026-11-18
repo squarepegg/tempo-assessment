@@ -38,6 +38,18 @@ jobs:
         shell: bash
         run: ./gradlew showExample -q --console=plain | tee forest.txt
 
+      - name: Try your own input (one valid forest, one invalid)
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '$ ./gradlew forest -q --args="--forest 1:0,2:1,3:2,4:1,5:0 --reject 2"'
+            ./gradlew forest -q --console=plain --args="--forest 1:0,2:1,3:2,4:1,5:0 --reject 2"
+            echo
+            echo '$ ./gradlew forest -q --args="--forest 1:0,2:2"'
+            ./gradlew forest -q --console=plain --args="--forest 1:0,2:2"
+          } 2>&1 | tee tool.txt
+
       - name: Mutation check (Task 1 tests against deliberately broken code)
         if: matrix.java == 21
         shell: bash
@@ -60,6 +72,12 @@ jobs:
             echo
             echo '```text'
             cat forest.txt
+            echo '```'
+            echo
+            echo "## Try your own input"
+            echo
+            echo '```text'
+            cat tool.txt
             echo '```'
             if [ -f mutation.log ]; then
               echo
